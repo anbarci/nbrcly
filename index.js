@@ -10,22 +10,32 @@ const port = process.env.PORT || 3000;
 const Client = new Genius.Client();
 
 // Middleware
-app.use(helmet()); // Güvenlik başlıkları için
-app.use(morgan('combined')); // Loglama için
-app.use(cors()); // CORS politikası için
-app.use(express.json()); // JSON body parsing için
+app.use(helmet());
+app.use(morgan('combined'));
+app.use(cors());
+app.use(express.json());
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 dakika
-  max: 100, // IP başına limit
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: 'Too many requests from this IP, please try again later.'
 });
 app.use(limiter);
 
+// Şarkı sözlerini düzenleme fonksiyonu
+function formatLyrics(lyrics) {
+  return lyrics
+    .replace(/\[/g, '\n[')  // Köşeli parantezleri yeni satıra al
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .join('\n');
+}
+
 // Ana route
 app.get('/', (req, res) => {
-  res.json({ message: 'Welcome to the Lyrics API' });
+  res.json({ message: 'Welcome to the Lyrics API', version: '1.1.0' });
 });
 
 // Lyrics arama route'u
@@ -40,7 +50,9 @@ app.get('/lyrics', async (req, res) => {
             return res.status(404).json({ error: 'No lyrics found' });
         }
         const firstSong = searches[0];
-        const lyrics = await firstSong.lyrics();
+        let lyrics = await firstSong.lyrics();
+        lyrics = formatLyrics(lyrics);
+
         res.json({
             song: firstSong.title,
             artist: firstSong.artist.name,
@@ -79,6 +91,28 @@ app.get('/artist', async (req, res) => {
     }
 });
 
+// Şarkı arama route'u
+app.get('/search', async (req, res) => {
+    try {
+        const query = req.query.q;
+        if (!query) {
+            return res.status(400).json({ error: 'Search query is required' });
+        }
+        const searches = await Client.songs.search(query);
+        const results = searches.map(song => ({
+            title: song.title,
+            artist: song.artist.name,
+            album: song.album ? song.album.name : 'Unknown',
+            releaseDate: song.releaseDate || 'Unknown',
+            image: song.image
+        }));
+        res.json(results);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: 'An error occurred while searching for songs' });
+    }
+});
+
 // 404 handler
 app.use((req, res, next) => {
   res.status(404).json({ error: 'Not Found' });
@@ -87,7 +121,7 @@ app.use((req, res, next) => {
 // Error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
+  res.status(500).json({ error: 'Something went wrong!', details: err.message });
 });
 
 // Server başlatma
